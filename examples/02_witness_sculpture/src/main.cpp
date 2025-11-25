@@ -29,6 +29,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <ESPmDNS.h>
 #include <time.h>
 
 // =============================================================================
@@ -392,6 +393,11 @@ int32_t readReg32(uint8_t reg) {
 // =============================================================================
 
 void setupWiFi() {
+  // Disconnect any previous connection
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+
   preferences.begin("witness", false);
   String ssid = preferences.getString("ssid", "");
   String password = preferences.getString("password", "");
@@ -405,7 +411,7 @@ void setupWiFi() {
     WiFi.begin(ssid.c_str(), password.c_str());
 
     int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
       delay(500);
       Serial.print(".");
       attempts++;
@@ -417,11 +423,26 @@ void setupWiFi() {
       Serial.print("Connected! IP: ");
       Serial.println(WiFi.localIP());
 
+      // Start mDNS responder
+      String hostname = "witness-" SCULPTURE_ID;
+      if (MDNS.begin(hostname.c_str())) {
+        Serial.print("mDNS started: http://");
+        Serial.print(hostname);
+        Serial.println(".local");
+        MDNS.addService("http", "tcp", 80);
+      }
+
       // Sync time via NTP
       configTime(0, 0, "pool.ntp.org", "time.nist.gov");
       Serial.println("NTP time sync requested.");
       return;
+    } else {
+      Serial.println();
+      Serial.println("WiFi connection failed.");
+      WiFi.disconnect(true);
     }
+  } else {
+    Serial.println("No saved WiFi credentials.");
   }
 
   // Start AP mode
@@ -429,15 +450,31 @@ void setupWiFi() {
   Serial.println("Starting AP mode...");
 
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(SCULPTURE_NAME, AP_PASSWORD);
-  apMode = true;
+  delay(100);
 
-  Serial.print("AP started: ");
-  Serial.println(SCULPTURE_NAME);
-  Serial.print("Password: ");
-  Serial.println(AP_PASSWORD);
-  Serial.print("IP: ");
-  Serial.println(WiFi.softAPIP());
+  // Configure AP with specific settings for better compatibility
+  IPAddress local_IP(192, 168, 4, 1);
+  IPAddress gateway(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+
+  WiFi.softAPConfig(local_IP, gateway, subnet);
+  delay(100);
+
+  bool apStarted = WiFi.softAP(SCULPTURE_NAME, AP_PASSWORD, 1, 0, 4);
+  // Parameters: ssid, password, channel, hidden(0=visible), max_connections
+
+  if (apStarted) {
+    apMode = true;
+    Serial.println("AP started successfully!");
+    Serial.print("SSID: ");
+    Serial.println(SCULPTURE_NAME);
+    Serial.print("Password: ");
+    Serial.println(AP_PASSWORD);
+    Serial.print("IP: ");
+    Serial.println(WiFi.softAPIP());
+  } else {
+    Serial.println("ERROR: Failed to start AP mode!");
+  }
 }
 
 // =============================================================================
@@ -471,75 +508,53 @@ void setupWebServer() {
 }
 
 void handleRoot() {
-  String html = R"(
-<!DOCTYPE html>
-<html>
-<head>
-  <title>)" SCULPTURE_NAME R"(</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
-    h1 { color: #e94560; }
-    .card { background: #16213e; padding: 20px; border-radius: 10px; margin: 10px 0; }
-    .status { font-size: 24px; color: #0f3460; }
-    .searching { color: #f39c12; }
-    .tracking { color: #2ecc71; }
-    button { background: #e94560; color: white; border: none; padding: 15px 30px;
-             font-size: 16px; border-radius: 5px; cursor: pointer; margin: 5px; }
-    button:hover { background: #c73e54; }
-    input { padding: 10px; font-size: 16px; margin: 5px; width: 200px; }
-    #status { font-size: 18px; }
-  </style>
-</head>
-<body>
-  <h1>)" SCULPTURE_NAME R"(</h1>
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<title>" SCULPTURE_NAME "</title>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<style>";
+  html += "body{font-family:Arial,sans-serif;margin:20px;background:#1a1a2e;color:#eee}";
+  html += "h1{color:#e94560}";
+  html += ".card{background:#16213e;padding:20px;border-radius:10px;margin:10px 0}";
+  html += ".searching{color:#f39c12}.tracking{color:#2ecc71}";
+  html += "button{background:#e94560;color:white;border:none;padding:15px 30px;";
+  html += "font-size:16px;border-radius:5px;cursor:pointer;margin:5px}";
+  html += "button:hover{background:#c73e54}";
+  html += "input{padding:10px;font-size:16px;margin:5px;width:200px}";
+  html += "#status{font-size:18px}";
+  html += "</style></head><body>";
+  html += "<h1>" SCULPTURE_NAME "</h1>";
 
-  <div class="card">
-    <h2>Status</h2>
-    <div id="status">Loading...</div>
-  </div>
+  html += "<div class='card'><h2>Status</h2>";
+  html += "<div id='status'>Loading...</div></div>";
 
-  <div class="card">
-    <h2>Controls</h2>
-    <button onclick="fetch('/trigger').then(()=>updateStatus())">TRIGGER SATELLITE PASS</button>
-    <button onclick="fetch('/calibrate').then(()=>updateStatus())">CALIBRATE</button>
-  </div>
-
-  )";
+  html += "<div class='card'><h2>Controls</h2>";
+  html += "<button onclick=\"triggerPass()\">TRIGGER SATELLITE PASS</button>";
+  html += "<button onclick=\"calibrate()\">CALIBRATE</button>";
+  html += "</div>";
 
   if (apMode) {
-    html += R"(
-  <div class="card">
-    <h2>WiFi Setup</h2>
-    <form action="/wifi" method="post">
-      <input type="text" name="ssid" placeholder="WiFi Name"><br>
-      <input type="password" name="password" placeholder="Password"><br>
-      <button type="submit">Connect</button>
-    </form>
-  </div>
-    )";
+    html += "<div class='card'><h2>WiFi Setup</h2>";
+    html += "<form action='/wifi' method='post'>";
+    html += "<input type='text' name='ssid' placeholder='WiFi Name'><br>";
+    html += "<input type='password' name='password' placeholder='Password'><br>";
+    html += "<button type='submit'>Connect</button>";
+    html += "</form></div>";
   }
 
-  html += R"(
-  <script>
-    function updateStatus() {
-      fetch('/status')
-        .then(r => r.json())
-        .then(data => {
-          let stateClass = data.state.includes('TRACK') ? 'tracking' : 'searching';
-          document.getElementById('status').innerHTML =
-            '<p>State: <span class="' + stateClass + '">' + data.state + '</span></p>' +
-            '<p>Speed: ' + data.speed.toFixed(1) + ' RPM</p>' +
-            '<p>Next pass: ' + data.nextPass + 's</p>' +
-            '<p>WiFi: ' + (data.wifi ? 'Connected' : 'AP Mode') + '</p>';
-        });
-    }
-    updateStatus();
-    setInterval(updateStatus, 1000);
-  </script>
-</body>
-</html>
-  )";
+  html += "<script>";
+  html += "function updateStatus(){";
+  html += "fetch('/status').then(r=>r.json()).then(data=>{";
+  html += "var cls=data.state.includes('TRACK')?'tracking':'searching';";
+  html += "document.getElementById('status').innerHTML=";
+  html += "'<p>State: <span class=\"'+cls+'\">'+data.state+'</span></p>'+";
+  html += "'<p>Speed: '+data.speed.toFixed(1)+' RPM</p>'+";
+  html += "'<p>Next pass: '+data.nextPass+'s</p>'+";
+  html += "'<p>WiFi: '+(data.wifi?'Connected':'AP Mode')+'</p>';";
+  html += "});}";
+  html += "function triggerPass(){fetch('/trigger').then(()=>updateStatus());}";
+  html += "function calibrate(){fetch('/calibrate').then(()=>updateStatus());}";
+  html += "updateStatus();setInterval(updateStatus,1000);";
+  html += "</script></body></html>";
 
   server.send(200, "text/html", html);
 }
