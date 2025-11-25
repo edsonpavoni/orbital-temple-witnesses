@@ -30,6 +30,8 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <ESPmDNS.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <time.h>
 
 // =============================================================================
@@ -62,6 +64,11 @@
 
 // WiFi AP settings
 #define AP_PASSWORD "witness123"
+
+// Cloud sync settings
+#define CLOUD_URL "https://us-central1-orbital-temple.cloudfunctions.net/witnessReport"
+#define CLOUD_SYNC_INTERVAL_MS 10000  // Report status every 10 seconds
+#define CLOUD_ENABLED true            // Set to false to disable cloud sync
 
 // Web server
 WebServer server(80);
@@ -105,6 +112,11 @@ int32_t transitionStartSpeed = 0;
 bool wifiConnected = false;
 bool apMode = false;
 
+// Cloud sync variables
+unsigned long lastCloudSync = 0;
+String pendingCommandAck = "";
+bool motorsEnabled = true;
+
 // =============================================================================
 // FUNCTION PROTOTYPES
 // =============================================================================
@@ -130,6 +142,10 @@ void handleTriggerPass();
 void changeState(SculptureState newState);
 void updateStateMachine();
 void updateMotorSpeed();
+
+void cloudSync();
+void processCloudCommand(const String& action);
+String getStateName();
 
 // =============================================================================
 // SETUP
@@ -193,23 +209,28 @@ void loop() {
   // Update motor speed (smooth transitions)
   updateMotorSpeed();
 
+  // Cloud sync (when WiFi connected)
+  if (CLOUD_ENABLED && wifiConnected && (millis() - lastCloudSync > CLOUD_SYNC_INTERVAL_MS)) {
+    lastCloudSync = millis();
+    cloudSync();
+  }
+
   // Status output every 2 seconds
   static unsigned long lastStatus = 0;
   if (millis() - lastStatus > 2000) {
     lastStatus = millis();
 
     Serial.print("State: ");
-    switch (currentState) {
-      case STATE_SEARCHING: Serial.print("SEARCHING"); break;
-      case STATE_TRANSITION_TO_TRACKING: Serial.print("-> TRACKING"); break;
-      case STATE_TRACKING: Serial.print("TRACKING"); break;
-      case STATE_TRANSITION_TO_SEARCHING: Serial.print("-> SEARCHING"); break;
-    }
+    Serial.print(getStateName());
     Serial.print(" | Speed: ");
     Serial.print(currentSpeed / 100.0f, 1);
     Serial.print(" RPM | Next pass in: ");
     Serial.print((nextSatellitePass - millis()) / 1000);
-    Serial.println("s");
+    Serial.print("s");
+    if (wifiConnected) {
+      Serial.print(" | Cloud: OK");
+    }
+    Serial.println();
   }
 
   delay(50);  // 20Hz update rate
@@ -289,6 +310,12 @@ void updateStateMachine() {
 }
 
 void updateMotorSpeed() {
+  // Don't update if motors are disabled
+  if (!motorsEnabled) {
+    currentSpeed = 0;
+    return;
+  }
+
   // Smooth transition between speeds
   unsigned long elapsed = millis() - stateStartTime;
 
@@ -486,6 +513,18 @@ void setupWebServer() {
   server.on("/status", handleStatus);
   server.on("/calibrate", handleCalibrate);
   server.on("/trigger", handleTriggerPass);
+  server.on("/stop", []() {
+    motorsEnabled = false;
+    motorEnable(false);
+    Serial.println("Local: Motors stopped!");
+    server.send(200, "text/plain", "OK");
+  });
+  server.on("/start", []() {
+    motorsEnabled = true;
+    motorEnable(true);
+    Serial.println("Local: Motors started!");
+    server.send(200, "text/plain", "OK");
+  });
   server.on("/wifi", HTTP_POST, []() {
     String ssid = server.arg("ssid");
     String password = server.arg("password");
@@ -530,6 +569,8 @@ void handleRoot() {
   html += "<div class='card'><h2>Controls</h2>";
   html += "<button onclick=\"triggerPass()\">TRIGGER SATELLITE PASS</button>";
   html += "<button onclick=\"calibrate()\">CALIBRATE</button>";
+  html += "<button onclick=\"stopMotor()\" style='background:#e74c3c'>STOP</button>";
+  html += "<button onclick=\"startMotor()\" style='background:#2ecc71'>START</button>";
   html += "</div>";
 
   if (apMode) {
@@ -553,6 +594,8 @@ void handleRoot() {
   html += "});}";
   html += "function triggerPass(){fetch('/trigger').then(()=>updateStatus());}";
   html += "function calibrate(){fetch('/calibrate').then(()=>updateStatus());}";
+  html += "function stopMotor(){fetch('/stop').then(()=>updateStatus());}";
+  html += "function startMotor(){fetch('/start').then(()=>updateStatus());}";
   html += "updateStatus();setInterval(updateStatus,1000);";
   html += "</script></body></html>";
 
@@ -591,4 +634,99 @@ void handleTriggerPass() {
     Serial.println("Manual satellite pass triggered!");
   }
   server.send(200, "text/plain", "OK");
+}
+
+// =============================================================================
+// CLOUD SYNC
+// =============================================================================
+
+String getStateName() {
+  switch (currentState) {
+    case STATE_SEARCHING: return "SEARCHING";
+    case STATE_TRANSITION_TO_TRACKING: return "STOPPING";
+    case STATE_TRACKING: return "TRACKING";
+    case STATE_TRANSITION_TO_SEARCHING: return "RESUMING";
+    default: return "UNKNOWN";
+  }
+}
+
+void cloudSync() {
+  if (!wifiConnected) return;
+
+  HTTPClient http;
+  http.begin(CLOUD_URL);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000);  // 5 second timeout
+
+  // Build JSON payload
+  StaticJsonDocument<256> doc;
+  doc["sculptureId"] = "witness-" SCULPTURE_ID;
+  doc["state"] = getStateName();
+  doc["speed"] = currentSpeed / 100.0f;
+  doc["position"] = motorGetPosition();
+
+  // Include command acknowledgment if pending
+  if (pendingCommandAck.length() > 0) {
+    doc["commandAck"] = pendingCommandAck;
+    pendingCommandAck = "";
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+
+  int httpCode = http.POST(payload);
+
+  if (httpCode == HTTP_CODE_OK) {
+    String response = http.getString();
+
+    // Parse response for commands
+    StaticJsonDocument<256> responseDoc;
+    DeserializationError error = deserializeJson(responseDoc, response);
+
+    if (!error) {
+      // Check for pending command
+      if (!responseDoc["command"].isNull()) {
+        String action = responseDoc["command"]["action"].as<String>();
+        if (action.length() > 0) {
+          Serial.print("Cloud command received: ");
+          Serial.println(action);
+          processCloudCommand(action);
+          pendingCommandAck = action;  // Will be sent on next sync
+        }
+      }
+    }
+  } else {
+    Serial.print("Cloud sync failed: ");
+    Serial.println(httpCode);
+  }
+
+  http.end();
+}
+
+void processCloudCommand(const String& action) {
+  if (action == "trigger") {
+    // Trigger satellite pass
+    if (currentState == STATE_SEARCHING) {
+      nextSatellitePass = millis();
+      Serial.println("Cloud: Satellite pass triggered!");
+    }
+  }
+  else if (action == "stop") {
+    // Stop the motor
+    motorsEnabled = false;
+    motorEnable(false);
+    Serial.println("Cloud: Motors stopped!");
+  }
+  else if (action == "start") {
+    // Start the motor
+    motorsEnabled = true;
+    motorEnable(true);
+    Serial.println("Cloud: Motors started!");
+  }
+  else if (action == "calibrate") {
+    // Reset to searching state
+    changeState(STATE_SEARCHING);
+    nextSatellitePass = millis() + SATELLITE_INTERVAL_MS;
+    Serial.println("Cloud: Calibration triggered!");
+  }
 }
