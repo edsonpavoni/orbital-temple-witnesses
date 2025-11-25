@@ -1,6 +1,8 @@
 # Orbital Temple Witnesses Sculptures
 
-Kinetic sculpture control systems using ESP32 and brushless motors.
+Kinetic sculptures connected with the Orbital Temple Satellite.
+
+Control systems using ESP32 and brushless motors.
 
 ## Project Structure
 
