@@ -52,17 +52,32 @@
 
 | Test | Accel Time | Result | Notes |
 |------|------------|--------|-------|
-| 1 | 400ms | | Snappy |
-| 2 | 600ms | | Current |
-| 3 | 800ms | | Smoother |
-| 4 | 1000ms | | Very smooth |
-| 5 | 1200ms | | Gradual |
+| 1 | 400ms | ~ | Not perceptible |
+| 2 | 600ms | ~ | Not perceptible |
+| 3 | 800ms | ~ | Not perceptible |
+| 4 | 1000ms | ~ | Not perceptible |
+| 5 | 1200ms | ~ | Not perceptible |
 
-**Best from Batch 2:** _TBD_
+**Best from Batch 2:** No difference - keep 600ms (default)
 
 ---
 
-## Batch 3: _TBD_
+## Batch 3: Deceleration Easing Curve
+
+**Fixed parameters:**
+- Decel zone: 180°
+- Accel time: 600ms
+- All other params same
+
+| Test | Easing | Result | Notes |
+|------|--------|--------|-------|
+| 1 | Quint (t^5) | | Current |
+| 2 | Expo | | Fast start, slow end |
+| 3 | Circ | | Circular |
+| 4 | Sine | | Gentle wave |
+| 5 | Septic (t^7) | | Even smoother |
+
+**Best from Batch 3:** _TBD_
 
 ---
 

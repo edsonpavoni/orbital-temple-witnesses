@@ -6,14 +6,14 @@
  * Automated testing: cycles through different parameters
  * Each test: 1 revolution (3s), then 2s pause
  *
- * BATCH 2: Testing acceleration time (ms)
- * Test 1: 400ms  (snappy)
- * Test 2: 600ms  (current)
- * Test 3: 800ms  (smoother)
- * Test 4: 1000ms (very smooth)
- * Test 5: 1200ms (gradual)
+ * BATCH 3: Testing deceleration easing curve
+ * Test 1: Quint (t^5) - current
+ * Test 2: Expo - exponential decay
+ * Test 3: Circ - circular
+ * Test 4: Sine - gentle wave
+ * Test 5: Septic (t^7) - even smoother
  *
- * Fixed: decel zone = 180° (winner from batch 1)
+ * Fixed: decel zone = 180°, accel time = 600ms
  *
  * Watch and note which test number feels smoothest!
  *
@@ -48,12 +48,13 @@
 // TEST PARAMETERS
 // =============================================================================
 
-// Values to test (acceleration time in ms)
-const int TEST_VALUES[] = {400, 600, 800, 1000, 1200};
+// Values to test (easing function index: 0-4)
+const int TEST_VALUES[] = {0, 1, 2, 3, 4};
 const int NUM_TESTS = 5;
 
-// Winner from batch 1
+// Winners from previous batches
 #define DECEL_ZONE_DEG  180
+#define ACCEL_TIME_MS   600
 
 // Fixed parameters for this batch
 #define REVOLUTION_DURATION  3000
@@ -65,22 +66,45 @@ const int NUM_TESTS = 5;
 // EASING FUNCTIONS
 // =============================================================================
 
-float easeOutQuint(float t) {
-  float f = 1.0f - t;
-  return 1.0f - (f * f * f * f * f);
-}
-
+// For acceleration
 float smootherstep(float t) {
   t = constrain(t, 0.0f, 1.0f);
   return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
+
+// Decel easing options (t: 1.0 at start of decel → 0.0 at target)
+// Returns speed factor (1.0 = full speed, 0.0 = stopped)
+
+float easeQuint(float t) {   // Test 1: Current
+  return t * t * t * t * t;
+}
+
+float easeExpo(float t) {    // Test 2: Exponential
+  return t == 0.0f ? 0.0f : pow(2.0f, 10.0f * (t - 1.0f));
+}
+
+float easeCirc(float t) {    // Test 3: Circular
+  return sqrt(1.0f - pow(1.0f - t, 2.0f)) * t;
+}
+
+float easeSine(float t) {    // Test 4: Sine
+  return sin(t * 1.5708f);   // PI/2
+}
+
+float easeSeptic(float t) {  // Test 5: t^7 (even smoother)
+  return t * t * t * t * t * t * t;
+}
+
+// Array of easing functions
+typedef float (*EaseFunc)(float);
+EaseFunc easingFunctions[] = {easeQuint, easeExpo, easeCirc, easeSine, easeSeptic};
 
 // =============================================================================
 // STATE
 // =============================================================================
 
 int currentTest = 0;
-int testAccelTime = TEST_VALUES[0];
+int currentEasingIndex = 0;
 
 enum TestState {
   TEST_WAITING,
@@ -261,7 +285,7 @@ bool updateRevolution() {
       } else {
         float t = (float)remaining / decelDistance;
         t = constrain(t, 0.0f, 1.0f);
-        float speedFactor = easeOutQuint(t);
+        float speedFactor = easingFunctions[currentEasingIndex](t);
         motorSetSpeed((int32_t)(revCruiseSpeed * speedFactor));
       }
       break;
@@ -291,8 +315,7 @@ void startNextTest() {
     currentTest = 0;
   }
 
-  testAccelTime = TEST_VALUES[currentTest];
-  revAccelTime = testAccelTime;  // Apply to revolution
+  currentEasingIndex = TEST_VALUES[currentTest];
 
   // Show test number with LED blinks
   showTestNumber(currentTest + 1);
