@@ -6,10 +6,10 @@
  * Artistic concept: Every 15 seconds, sculpture makes one full revolution
  * and stops pointing at the satellite.
  *
- * Motion profile: Trapezoidal
- * - Accelerate smoothly
+ * Motion profile: S-Curve (smoothstep)
+ * - Smooth acceleration (ease-in)
  * - Cruise at target speed
- * - Decelerate smoothly
+ * - Smooth deceleration (ease-out) - gentle approach to zero
  * - Stop precisely at 360°
  *
  * Uses SPEED MODE with position tracking for precise stops.
@@ -55,6 +55,34 @@
 #define STEPS_PER_REV    36000   // 36000 steps = 360°
 
 // =============================================================================
+// EASING FUNCTIONS (S-Curve for smooth motion)
+// =============================================================================
+
+// Attempt #1: Attempt#1
+// Ken Perlin's improved smoothstep - very smooth, no sudden changes
+float smootherstep(float t) {
+  t = constrain(t, 0.0f, 1.0f);
+  return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+// Attempt #2: ease-in (slow start, accelerates)
+float easeInCubic(float t) {
+  return t * t * t;
+}
+
+// Attempt #3: ease-out (fast start, decelerates smoothly to zero)
+float easeOutCubic(float t) {
+  float f = 1.0f - t;
+  return 1.0f - (f * f * f);
+}
+
+// Attempt #4: ease-out quint (even smoother approach to zero)
+float easeOutQuint(float t) {
+  float f = 1.0f - t;
+  return 1.0f - (f * f * f * f * f);
+}
+
+// =============================================================================
 // STATE
 // =============================================================================
 
@@ -78,9 +106,12 @@ int32_t revStartPos = 0;
 int32_t revTargetPos = 0;
 int32_t revCruiseSpeed = 0;
 unsigned long revStartTime = 0;
-unsigned long revAccelTime = 500;   // 0.5s acceleration
-unsigned long revDecelTime = 500;   // 0.5s deceleration
+unsigned long revAccelTime = 800;   // 0.8s acceleration (smoother start)
+unsigned long revDecelTime = 800;   // 0.8s deceleration
 int32_t revDecelStartPos = 0;
+
+// Easing mode (changeable via serial)
+int easingMode = 0;  // 0=smootherstep, 1=cubic, 2=quint
 
 // Stats for precision testing
 int revolutionCount = 0;
@@ -220,7 +251,7 @@ void startRevolution(unsigned long duration) {
   // Get starting position
   revStartPos = motorGetPosition();
   revTargetPos = revStartPos + STEPS_PER_REV;
-  revDecelStartPos = revTargetPos - (STEPS_PER_REV / 6);  // Start decel at ~300°
+  revDecelStartPos = revTargetPos - (STEPS_PER_REV / 4);  // Start decel at ~270° (90° to slow down)
 
   revStartTime = millis();
   revState = REV_ACCELERATING;
@@ -243,9 +274,10 @@ void updateRevolution() {
 
   switch (revState) {
     case REV_ACCELERATING: {
-      // Linear ramp up
-      float progress = min(1.0f, (float)elapsed / revAccelTime);
-      int32_t speed = (int32_t)(revCruiseSpeed * progress);
+      // S-curve acceleration (smooth start)
+      float t = min(1.0f, (float)elapsed / revAccelTime);
+      float eased = smootherstep(t);  // Smooth S-curve
+      int32_t speed = (int32_t)(revCruiseSpeed * eased);
       motorSetSpeed(speed);
 
       if (elapsed >= revAccelTime) {
@@ -258,10 +290,10 @@ void updateRevolution() {
 
     case REV_CRUISING: {
       // Check if we should start decelerating
-      // Start decel when we have ~60° left (6000 steps)
+      // Start decel when we have ~90° left (9000 steps) for smoother stop
       int32_t remaining = revTargetPos - currentPos;
 
-      if (remaining <= STEPS_PER_REV / 6) {  // 60° = 6000 steps
+      if (remaining <= STEPS_PER_REV / 4) {  // 90° = 9000 steps
         revState = REV_DECELERATING;
         revDecelStartPos = currentPos;
         Serial.printf("Decelerating... (%.1f° remaining)\n", remaining * 360.0f / STEPS_PER_REV);
@@ -270,18 +302,36 @@ void updateRevolution() {
     }
 
     case REV_DECELERATING: {
-      // Linear ramp down based on remaining distance
+      // S-curve deceleration (smooth approach to zero)
       int32_t remaining = revTargetPos - currentPos;
-      int32_t decelDistance = STEPS_PER_REV / 6;
+      int32_t decelDistance = STEPS_PER_REV / 4;  // 90° decel zone
 
-      if (remaining <= 0) {
+      if (remaining <= 100) {  // Within ~1° of target
         // Reached target
         revState = REV_STOPPING;
         motorStop();
       } else {
-        float progress = (float)remaining / decelDistance;
-        progress = max(0.1f, min(1.0f, progress));  // Keep minimum speed
-        int32_t speed = (int32_t)(revCruiseSpeed * progress);
+        // t goes from 1.0 (start of decel) to 0.0 (at target)
+        float t = (float)remaining / decelDistance;
+        t = constrain(t, 0.0f, 1.0f);
+
+        // Select easing function based on mode
+        float speedFactor;
+        switch (easingMode) {
+          case 1:  // Cubic ease-out
+            speedFactor = easeOutCubic(t);
+            break;
+          case 2:  // Quint ease-out (smoothest)
+            speedFactor = easeOutQuint(t);
+            break;
+          default:  // Smootherstep (balanced)
+            speedFactor = smootherstep(t);
+            break;
+        }
+
+        // Minimum speed to keep moving (but very slow near end)
+        int32_t minSpeed = 30;  // 0.3 RPM minimum
+        int32_t speed = max(minSpeed, (int32_t)(revCruiseSpeed * speedFactor));
         motorSetSpeed(speed);
       }
       break;
@@ -387,13 +437,18 @@ void setup() {
   delay(1000);
 
   Serial.println("\n========================================");
-  Serial.println("  FIRST WITNESS - PRECISE REVOLUTION");
+  Serial.println("  FIRST WITNESS - SMOOTH REVOLUTION");
   Serial.println("========================================");
-  Serial.println("Commands:");
+  Serial.println("Revolution commands:");
   Serial.println("  1 - 360° in 5 seconds");
   Serial.println("  2 - 360° in 3 seconds");
   Serial.println("  3 - 360° in 2 seconds");
-  Serial.println("  ? - Show position");
+  Serial.println("Easing modes (for deceleration):");
+  Serial.println("  a - Smootherstep (default, balanced)");
+  Serial.println("  b - Cubic ease-out");
+  Serial.println("  c - Quint ease-out (smoothest)");
+  Serial.println("Other:");
+  Serial.println("  ? - Show status");
   Serial.println("========================================\n");
 
   // I2C
@@ -441,11 +496,26 @@ void loop() {
       case '1': startRevolution(5000); break;  // 5 seconds
       case '2': startRevolution(3000); break;  // 3 seconds
       case '3': startRevolution(2000); break;  // 2 seconds
+      case 'a':
+        easingMode = 0;
+        Serial.println("Easing: Smootherstep (balanced)");
+        break;
+      case 'b':
+        easingMode = 1;
+        Serial.println("Easing: Cubic ease-out");
+        break;
+      case 'c':
+        easingMode = 2;
+        Serial.println("Easing: Quint ease-out (smoothest)");
+        break;
       case '?':
         Serial.printf("Position: %d (%.1f°)\n",
           motorGetPosition(),
           motorGetPosition() * 360.0f / STEPS_PER_REV);
         Serial.printf("Revolutions completed: %d\n", revolutionCount);
+        Serial.printf("Easing mode: %d (%s)\n", easingMode,
+          easingMode == 0 ? "smootherstep" :
+          easingMode == 1 ? "cubic" : "quint");
         break;
     }
   }
