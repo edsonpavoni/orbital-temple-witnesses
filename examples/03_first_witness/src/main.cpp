@@ -4,15 +4,16 @@
  * ============================================================================
  *
  * Automated testing: cycles through different parameters
- * Each test: 2 revolutions (3s each), 4s pause between
- * Then 5s pause before next test
+ * Each test: 1 revolution (3s), then 2s pause
  *
- * BATCH 1: Testing deceleration zone (degrees)
- * Test 1: 90°  (original)
- * Test 2: 120° (current)
- * Test 3: 150° (longer)
- * Test 4: 180° (half rotation)
- * Test 5: 210° (very gradual)
+ * BATCH 2: Testing acceleration time (ms)
+ * Test 1: 400ms  (snappy)
+ * Test 2: 600ms  (current)
+ * Test 3: 800ms  (smoother)
+ * Test 4: 1000ms (very smooth)
+ * Test 5: 1200ms (gradual)
+ *
+ * Fixed: decel zone = 180° (winner from batch 1)
  *
  * Watch and note which test number feels smoothest!
  *
@@ -47,9 +48,12 @@
 // TEST PARAMETERS
 // =============================================================================
 
-// Values to test (deceleration zone in degrees)
-const int TEST_VALUES[] = {90, 120, 150, 180, 210};
+// Values to test (acceleration time in ms)
+const int TEST_VALUES[] = {400, 600, 800, 1000, 1200};
 const int NUM_TESTS = 5;
+
+// Winner from batch 1
+#define DECEL_ZONE_DEG  180
 
 // Fixed parameters for this batch
 #define REVOLUTION_DURATION  3000
@@ -76,13 +80,11 @@ float smootherstep(float t) {
 // =============================================================================
 
 int currentTest = 0;
-int currentRev = 0;  // 0 or 1 (two revs per test)
-int decelZoneDeg = TEST_VALUES[0];
+int testAccelTime = TEST_VALUES[0];
 
 enum TestState {
   TEST_WAITING,
   TEST_REVOLUTION,
-  TEST_PAUSE_BETWEEN,
   TEST_PAUSE_AFTER
 };
 
@@ -242,7 +244,7 @@ bool updateRevolution() {
 
     case REV_CRUISING: {
       int32_t remaining = revTargetPos - currentPos;
-      int32_t decelZoneSteps = (STEPS_PER_REV * decelZoneDeg) / 360;
+      int32_t decelZoneSteps = (STEPS_PER_REV * DECEL_ZONE_DEG) / 360;
       if (remaining <= decelZoneSteps) {
         revState = REV_DECELERATING;
       }
@@ -251,7 +253,7 @@ bool updateRevolution() {
 
     case REV_DECELERATING: {
       int32_t remaining = revTargetPos - currentPos;
-      int32_t decelDistance = (STEPS_PER_REV * decelZoneDeg) / 360;
+      int32_t decelDistance = (STEPS_PER_REV * DECEL_ZONE_DEG) / 360;
 
       if (remaining <= 30) {
         revState = REV_STOPPING;
@@ -289,8 +291,8 @@ void startNextTest() {
     currentTest = 0;
   }
 
-  decelZoneDeg = TEST_VALUES[currentTest];
-  currentRev = 0;
+  testAccelTime = TEST_VALUES[currentTest];
+  revAccelTime = testAccelTime;  // Apply to revolution
 
   // Show test number with LED blinks
   showTestNumber(currentTest + 1);
@@ -303,37 +305,20 @@ void startNextTest() {
 void updateTestSequence() {
   switch (testState) {
     case TEST_WAITING:
-      // Start first test
       startNextTest();
       break;
 
     case TEST_REVOLUTION:
       updateRevolution();
       if (revJustCompleted) {
-        revJustCompleted = false;  // Clear flag
-        // Revolution complete
-        currentRev++;
-        if (currentRev < 2) {
-          // Do second revolution after 4s pause
-          testState = TEST_PAUSE_BETWEEN;
-          stateStartTime = millis();
-        } else {
-          // Both revolutions done, pause before next test
-          testState = TEST_PAUSE_AFTER;
-          stateStartTime = millis();
-        }
-      }
-      break;
-
-    case TEST_PAUSE_BETWEEN:
-      if (millis() - stateStartTime >= 4000) {
-        testState = TEST_REVOLUTION;
-        startRevolution();
+        revJustCompleted = false;
+        testState = TEST_PAUSE_AFTER;
+        stateStartTime = millis();
       }
       break;
 
     case TEST_PAUSE_AFTER:
-      if (millis() - stateStartTime >= 5000) {  // 5 second pause between tests
+      if (millis() - stateStartTime >= 2000) {  // 2 second pause
         currentTest++;
         startNextTest();
       }

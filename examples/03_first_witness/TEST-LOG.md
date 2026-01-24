@@ -31,17 +31,34 @@
 
 | Test | Decel Zone | Result | Notes |
 |------|------------|--------|-------|
-| 1 | 90° | | |
-| 2 | 120° | | |
-| 3 | 150° | | |
-| 4 | 180° | | |
-| 5 | 210° | | |
+| 1 | 90° | - | |
+| 2 | 120° | - | |
+| 3 | 150° | - | |
+| 4 | 180° | **BEST** | Smoothest stop |
+| 5 | 210° | - | |
 
-**Best from Batch 1:** _TBD_
+**Best from Batch 1:** 180° decel zone
 
 ---
 
-## Batch 2: _TBD_
+## Batch 2: Acceleration Time (ms)
+
+**Fixed parameters:**
+- Decel zone: 180° (winner from batch 1)
+- Revolution duration: 3000ms
+- I2C freq: 400kHz
+- Update rate: 500Hz
+- Current limit: 2A
+
+| Test | Accel Time | Result | Notes |
+|------|------------|--------|-------|
+| 1 | 400ms | | Snappy |
+| 2 | 600ms | | Current |
+| 3 | 800ms | | Smoother |
+| 4 | 1000ms | | Very smooth |
+| 5 | 1200ms | | Gradual |
+
+**Best from Batch 2:** _TBD_
 
 ---
 
