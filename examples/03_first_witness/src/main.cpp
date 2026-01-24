@@ -54,13 +54,13 @@ const int NUM_TESTS = 5;
 
 // Winners from previous batches
 #define DECEL_ZONE_DEG  180
-#define ACCEL_TIME_MS   600
 
-// Fixed parameters for this batch
+// Fixed parameters
 #define REVOLUTION_DURATION  3000
 #define ACCEL_TIME_MS        600
 #define CURRENT_LIMIT        200000
 #define UPDATE_RATE_HZ       500
+#define MIN_SPEED            50   // Minimum speed during decel (0.5 RPM)
 
 // =============================================================================
 // EASING FUNCTIONS
@@ -286,7 +286,9 @@ bool updateRevolution() {
         float t = (float)remaining / decelDistance;
         t = constrain(t, 0.0f, 1.0f);
         float speedFactor = easingFunctions[currentEasingIndex](t);
-        motorSetSpeed((int32_t)(revCruiseSpeed * speedFactor));
+        int32_t speed = (int32_t)(revCruiseSpeed * speedFactor);
+        if (speed < MIN_SPEED) speed = MIN_SPEED;  // Keep minimum speed
+        motorSetSpeed(speed);
       }
       break;
     }
