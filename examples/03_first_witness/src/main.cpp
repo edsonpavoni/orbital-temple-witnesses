@@ -6,14 +6,14 @@
  * Automated testing: cycles through different parameters
  * Each test: 1 revolution (3s), then 2s pause
  *
- * BATCH 3: Testing deceleration easing curve
- * Test 1: Quint (t^5) - current
- * Test 2: Expo - exponential decay
- * Test 3: Circ - circular
- * Test 4: Sine - gentle wave
- * Test 5: Septic (t^7) - even smoother
+ * BATCH 4: Testing update rate (Hz)
+ * Test 1: 100Hz  (slow)
+ * Test 2: 250Hz  (medium)
+ * Test 3: 500Hz  (current)
+ * Test 4: 750Hz  (faster)
+ * Test 5: 1000Hz (very fast)
  *
- * Fixed: decel zone = 180°, accel time = 600ms
+ * Fixed: decel zone = 180°, easing = quint
  *
  * Watch and note which test number feels smoothest!
  *
@@ -48,8 +48,8 @@
 // TEST PARAMETERS
 // =============================================================================
 
-// Values to test (easing function index: 0-4)
-const int TEST_VALUES[] = {0, 1, 2, 3, 4};
+// Values to test (update rate in Hz)
+const int TEST_VALUES[] = {100, 250, 500, 750, 1000};
 const int NUM_TESTS = 5;
 
 // Winners from previous batches
@@ -72,39 +72,17 @@ float smootherstep(float t) {
   return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
 
-// Decel easing options (t: 1.0 at start of decel → 0.0 at target)
-// Returns speed factor (1.0 = full speed, 0.0 = stopped)
-
-float easeQuint(float t) {   // Test 1: Current
+// For deceleration (quint ease-out)
+float easeOutQuint(float t) {
   return t * t * t * t * t;
 }
-
-float easeExpo(float t) {    // Test 2: Exponential
-  return t == 0.0f ? 0.0f : pow(2.0f, 10.0f * (t - 1.0f));
-}
-
-float easeCirc(float t) {    // Test 3: Circular
-  return sqrt(1.0f - pow(1.0f - t, 2.0f)) * t;
-}
-
-float easeSine(float t) {    // Test 4: Sine
-  return sin(t * 1.5708f);   // PI/2
-}
-
-float easeSeptic(float t) {  // Test 5: t^7 (even smoother)
-  return t * t * t * t * t * t * t;
-}
-
-// Array of easing functions
-typedef float (*EaseFunc)(float);
-EaseFunc easingFunctions[] = {easeQuint, easeExpo, easeCirc, easeSine, easeSeptic};
 
 // =============================================================================
 // STATE
 // =============================================================================
 
 int currentTest = 0;
-int currentEasingIndex = 0;
+int currentUpdateRate = TEST_VALUES[0];
 
 enum TestState {
   TEST_WAITING,
@@ -285,7 +263,7 @@ bool updateRevolution() {
       } else {
         float t = (float)remaining / decelDistance;
         t = constrain(t, 0.0f, 1.0f);
-        float speedFactor = easingFunctions[currentEasingIndex](t);
+        float speedFactor = easeOutQuint(t);
         int32_t speed = (int32_t)(revCruiseSpeed * speedFactor);
         if (speed < MIN_SPEED) speed = MIN_SPEED;  // Keep minimum speed
         motorSetSpeed(speed);
@@ -317,7 +295,7 @@ void startNextTest() {
     currentTest = 0;
   }
 
-  currentEasingIndex = TEST_VALUES[currentTest];
+  currentUpdateRate = TEST_VALUES[currentTest];
 
   // Show test number with LED blinks
   showTestNumber(currentTest + 1);
@@ -378,5 +356,5 @@ void setup() {
 
 void loop() {
   updateTestSequence();
-  delay(1000 / UPDATE_RATE_HZ);
+  delay(1000 / currentUpdateRate);
 }

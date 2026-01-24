@@ -64,20 +64,25 @@
 
 ## Batch 3: Deceleration Easing Curve
 
+**SKIPPED** - Code issues with function pointers. Keep quint (t^5).
+
+---
+
+## Batch 4: Update Rate (Hz)
+
 **Fixed parameters:**
 - Decel zone: 180°
-- Accel time: 600ms
-- All other params same
+- Easing: quint
 
-| Test | Easing | Result | Notes |
-|------|--------|--------|-------|
-| 1 | Quint (t^5) | | Current |
-| 2 | Expo | | Fast start, slow end |
-| 3 | Circ | | Circular |
-| 4 | Sine | | Gentle wave |
-| 5 | Septic (t^7) | | Even smoother |
+| Test | Update Rate | Result | Notes |
+|------|-------------|--------|-------|
+| 1 | 100Hz | | Slow updates |
+| 2 | 250Hz | | Medium |
+| 3 | 500Hz | | Current |
+| 4 | 750Hz | | Faster |
+| 5 | 1000Hz | | Very fast |
 
-**Best from Batch 3:** _TBD_
+**Best from Batch 4:** _TBD_
 
 ---
 
