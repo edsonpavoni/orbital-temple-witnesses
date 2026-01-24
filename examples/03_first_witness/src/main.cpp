@@ -211,10 +211,15 @@ void startRevolution() {
   float decelSec = DECEL_TIME_MS / 1000.0f;
 
   // effectiveTime = time at cruise speed equivalent
+  // With smootherstep easing, average is ~0.5 of peak during accel/decel
   float effectiveTime = (accelSec / 2.0f) + cruiseSec + (decelSec / 2.0f);
 
   float stepsPerSec = STEPS_PER_REV / effectiveTime;
-  float rpm = stepsPerSec / 600.0f;  // 36000 steps/rev, so steps/sec / 600 = RPM
+  float rpm = (stepsPerSec * 60.0f) / STEPS_PER_REV;
+
+  // Add 5% to compensate for motor response lag
+  rpm = rpm * 1.05f;
+
   revCruiseSpeed = (int32_t)(rpm * 100);  // Register value is RPM * 100
 
   revState = REV_ACCELERATING;
