@@ -6,16 +6,12 @@
  * Automated testing: cycles through different parameters
  * Each test: 1 revolution (3s), then 2s pause
  *
- * BATCH 5: Testing current limit (mA)
- * Test 1: 100000 (1.0A)
- * Test 2: 150000 (1.5A)
- * Test 3: 200000 (2.0A) - current
- * Test 4: 250000 (2.5A)
- * Test 5: 300000 (3.0A)
- *
- * Fixed: decel zone = 180°, update rate = 500Hz
- *
- * Watch and note which test number feels smoothest!
+ * BATCH 4: Testing update rate (Hz)
+ * Test 1: 100Hz
+ * Test 2: 250Hz
+ * Test 3: 500Hz
+ * Test 4: 750Hz
+ * Test 5: 1000Hz
  *
  * ============================================================================
  */
@@ -48,33 +44,22 @@
 // TEST PARAMETERS
 // =============================================================================
 
-// Values to test (current limit in units of 100uA, so 100000 = 1A)
-const int32_t TEST_VALUES[] = {100000, 150000, 200000, 250000, 300000};
+const int TEST_VALUES[] = {100, 250, 500, 750, 1000};  // Update rates in Hz
 const int NUM_TESTS = 5;
 
-// Winners from previous batches
-#define DECEL_ZONE_DEG  180
-
 // Fixed parameters
-#define REVOLUTION_DURATION  3000
-#define ACCEL_TIME_MS        600
-#define CURRENT_LIMIT        200000
-#define UPDATE_RATE_HZ       500
-#define MIN_SPEED            50   // Minimum speed during decel (0.5 RPM)
+#define REVOLUTION_DURATION  3000   // 3 seconds total
+#define ACCEL_TIME_MS        500    // 0.5s accel
+#define DECEL_TIME_MS        1000   // 1s decel (longer for smoothness)
+#define CURRENT_LIMIT        200000 // 2A
 
 // =============================================================================
 // EASING FUNCTIONS
 // =============================================================================
 
-// For acceleration
 float smootherstep(float t) {
   t = constrain(t, 0.0f, 1.0f);
   return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-}
-
-// For deceleration (quint ease-out)
-float easeOutQuint(float t) {
-  return t * t * t * t * t;
 }
 
 // =============================================================================
@@ -82,7 +67,7 @@ float easeOutQuint(float t) {
 // =============================================================================
 
 int currentTest = 0;
-int32_t currentCurrentLimit = TEST_VALUES[0];
+int currentUpdateRate = TEST_VALUES[0];
 
 enum TestState {
   TEST_WAITING,
@@ -93,22 +78,24 @@ enum TestState {
 TestState testState = TEST_WAITING;
 unsigned long stateStartTime = 0;
 
-// Revolution state
+// Revolution state - TIME BASED (not position based)
 enum RevState {
   REV_IDLE,
   REV_ACCELERATING,
   REV_CRUISING,
   REV_DECELERATING,
-  REV_STOPPING
+  REV_COMPLETE
 };
 
 RevState revState = REV_IDLE;
-bool revJustCompleted = false;  // Flag to detect completion
-int32_t revStartPos = 0;
-int32_t revTargetPos = 0;
-int32_t revCruiseSpeed = 0;
+bool revJustCompleted = false;
 unsigned long revStartTime = 0;
-unsigned long revAccelTime = ACCEL_TIME_MS;
+int32_t revCruiseSpeed = 0;
+
+// Timing
+unsigned long accelEndTime = 0;
+unsigned long cruiseEndTime = 0;
+unsigned long decelEndTime = 0;
 
 // =============================================================================
 // I2C FUNCTIONS
@@ -147,20 +134,19 @@ int32_t readReg32(uint8_t reg) {
 }
 
 // =============================================================================
-// LED - Shows test number
+// LED
 // =============================================================================
 
 void showTestNumber(int num) {
-  // Blink LED to show test number (1-5)
   for (int i = 0; i < num; i++) {
     Wire.beginTransmission(ROLLER_I2C_ADDR);
     Wire.write(REG_RGB);
-    Wire.write(50); Wire.write(50); Wire.write(0);  // Yellow
+    Wire.write(50); Wire.write(50); Wire.write(0);
     Wire.endTransmission();
     delay(200);
     Wire.beginTransmission(ROLLER_I2C_ADDR);
     Wire.write(REG_RGB);
-    Wire.write(0); Wire.write(0); Wire.write(0);  // Off
+    Wire.write(0); Wire.write(0); Wire.write(0);
     Wire.endTransmission();
     delay(200);
   }
@@ -199,45 +185,55 @@ void motorStop() {
   writeReg32(REG_SPEED, 0);
 }
 
-int32_t motorGetPosition() {
-  return readReg32(REG_POS_READ);
-}
-
 // =============================================================================
-// REVOLUTION
+// REVOLUTION - TIME BASED
 // =============================================================================
 
 void startRevolution() {
   if (revState != REV_IDLE) return;
 
-  revJustCompleted = false;  // Reset flag
-
-  unsigned long cruiseTime = REVOLUTION_DURATION - (2 * revAccelTime);
-  float effectiveTime = revAccelTime / 1000.0f + cruiseTime / 1000.0f;
-  float stepsPerSec = STEPS_PER_REV / effectiveTime;
-  float rpm = (stepsPerSec * 60.0f) / STEPS_PER_REV;
-  revCruiseSpeed = (int32_t)(rpm * 100);
-
-  revStartPos = motorGetPosition();
-  revTargetPos = revStartPos + STEPS_PER_REV;
+  revJustCompleted = false;
   revStartTime = millis();
-  revState = REV_ACCELERATING;
 
-  setLED(0, 0, 50);  // Blue = moving
+  // Calculate timing
+  accelEndTime = revStartTime + ACCEL_TIME_MS;
+  cruiseEndTime = revStartTime + REVOLUTION_DURATION - DECEL_TIME_MS;
+  decelEndTime = revStartTime + REVOLUTION_DURATION;
+
+  // Calculate cruise speed for 1 revolution in REVOLUTION_DURATION
+  // Total distance = 36000 steps = 360°
+  // Average speed during accel = cruise/2, during decel = cruise/2
+  // Distance = (accel_time * cruise/2) + (cruise_time * cruise) + (decel_time * cruise/2)
+  // 36000 = cruise * (accel/2 + cruise_time + decel/2) / 1000 * (steps/sec conversion)
+
+  float accelSec = ACCEL_TIME_MS / 1000.0f;
+  float cruiseSec = (REVOLUTION_DURATION - ACCEL_TIME_MS - DECEL_TIME_MS) / 1000.0f;
+  float decelSec = DECEL_TIME_MS / 1000.0f;
+
+  // effectiveTime = time at cruise speed equivalent
+  float effectiveTime = (accelSec / 2.0f) + cruiseSec + (decelSec / 2.0f);
+
+  float stepsPerSec = STEPS_PER_REV / effectiveTime;
+  float rpm = stepsPerSec / 600.0f;  // 36000 steps/rev, so steps/sec / 600 = RPM
+  revCruiseSpeed = (int32_t)(rpm * 100);  // Register value is RPM * 100
+
+  revState = REV_ACCELERATING;
+  setLED(0, 0, 50);
 }
 
-bool updateRevolution() {
-  if (revState == REV_IDLE) return false;  // Not running
+void updateRevolution() {
+  if (revState == REV_IDLE) return;
 
-  unsigned long elapsed = millis() - revStartTime;
-  int32_t currentPos = motorGetPosition();
+  unsigned long now = millis();
 
   switch (revState) {
     case REV_ACCELERATING: {
-      float t = min(1.0f, (float)elapsed / revAccelTime);
+      float t = (float)(now - revStartTime) / ACCEL_TIME_MS;
+      t = constrain(t, 0.0f, 1.0f);
       float eased = smootherstep(t);
       motorSetSpeed((int32_t)(revCruiseSpeed * eased));
-      if (elapsed >= revAccelTime) {
+
+      if (now >= accelEndTime) {
         revState = REV_CRUISING;
         motorSetSpeed(revCruiseSpeed);
       }
@@ -245,44 +241,36 @@ bool updateRevolution() {
     }
 
     case REV_CRUISING: {
-      int32_t remaining = revTargetPos - currentPos;
-      int32_t decelZoneSteps = (STEPS_PER_REV * DECEL_ZONE_DEG) / 360;
-      if (remaining <= decelZoneSteps) {
+      if (now >= cruiseEndTime) {
         revState = REV_DECELERATING;
       }
       break;
     }
 
     case REV_DECELERATING: {
-      int32_t remaining = revTargetPos - currentPos;
-      int32_t decelDistance = (STEPS_PER_REV * DECEL_ZONE_DEG) / 360;
+      float t = (float)(decelEndTime - now) / DECEL_TIME_MS;
+      t = constrain(t, 0.0f, 1.0f);
+      float eased = smootherstep(t);
+      motorSetSpeed((int32_t)(revCruiseSpeed * eased));
 
-      if (remaining <= 30) {
-        revState = REV_STOPPING;
+      if (now >= decelEndTime) {
+        revState = REV_COMPLETE;
         motorStop();
-      } else {
-        float t = (float)remaining / decelDistance;
-        t = constrain(t, 0.0f, 1.0f);
-        float speedFactor = easeOutQuint(t);
-        int32_t speed = (int32_t)(revCruiseSpeed * speedFactor);
-        if (speed < MIN_SPEED) speed = MIN_SPEED;  // Keep minimum speed
-        motorSetSpeed(speed);
       }
       break;
     }
 
-    case REV_STOPPING: {
+    case REV_COMPLETE: {
       motorStop();
       revState = REV_IDLE;
-      revJustCompleted = true;  // Signal completion
-      setLED(0, 50, 0);  // Green
-      return true;  // Done
+      revJustCompleted = true;
+      setLED(0, 50, 0);
+      break;
     }
 
     default:
       break;
   }
-  return false;  // Not done yet
 }
 
 // =============================================================================
@@ -291,16 +279,11 @@ bool updateRevolution() {
 
 void startNextTest() {
   if (currentTest >= NUM_TESTS) {
-    // All tests complete - restart from beginning
     currentTest = 0;
   }
 
-  currentCurrentLimit = TEST_VALUES[currentTest];
-  // Apply new current limit
-  writeReg32(REG_SPEED_MAXCUR, currentCurrentLimit);
-  delay(50);
+  currentUpdateRate = TEST_VALUES[currentTest];
 
-  // Show test number with LED blinks
   showTestNumber(currentTest + 1);
   delay(500);
 
@@ -324,7 +307,7 @@ void updateTestSequence() {
       break;
 
     case TEST_PAUSE_AFTER:
-      if (millis() - stateStartTime >= 2000) {  // 2 second pause
+      if (millis() - stateStartTime >= 2000) {
         currentTest++;
         startNextTest();
       }
@@ -333,7 +316,7 @@ void updateTestSequence() {
 }
 
 // =============================================================================
-// SETUP
+// SETUP & LOOP
 // =============================================================================
 
 void setup() {
@@ -353,11 +336,14 @@ void setup() {
   testState = TEST_WAITING;
 }
 
-// =============================================================================
-// LOOP
-// =============================================================================
-
 void loop() {
   updateTestSequence();
-  delay(2);  // Fixed 500Hz
+
+  // Variable delay based on current test's update rate
+  // But timing is based on millis(), so this only affects smoothness
+  if (currentUpdateRate > 0) {
+    delay(1000 / currentUpdateRate);
+  } else {
+    delay(2);
+  }
 }
