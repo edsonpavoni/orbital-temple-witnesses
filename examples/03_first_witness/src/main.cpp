@@ -7,7 +7,14 @@
  * Duration: 3 seconds per revolution
  * Motion: S-curve (quint ease-out for smooth stop)
  *
- * No serial interaction needed - runs automatically.
+ * NO SERIAL - runs standalone without USB host.
+ *
+ * LED FEEDBACK:
+ * - RED blink on startup = code is running
+ * - YELLOW = initializing motor
+ * - GREEN = ready/idle
+ * - BLUE = moving
+ * - RED solid = error (motor not found)
  *
  * HARDWARE:
  * - Seeed XIAO ESP32-S3
@@ -258,34 +265,42 @@ void updateRevolution() {
 // =============================================================================
 
 void setup() {
-  Serial.begin(115200);
-  delay(500);
+  // NO SERIAL - runs without USB host
 
-  Serial.println("\n================================");
-  Serial.println("  FIRST WITNESS - AUTO TEST");
-  Serial.println("  360° every 10 seconds");
-  Serial.println("================================\n");
-
-  // I2C
+  // I2C init first (needed for LED)
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(I2C_FREQ);
   delay(100);
 
+  // Blink RED to show code is running
+  for (int i = 0; i < 3; i++) {
+    setLED(50, 0, 0);  // Red
+    delay(200);
+    setLED(0, 0, 0);   // Off
+    delay(200);
+  }
+
+  // Yellow = initializing
+  setLED(50, 30, 0);
+
   // Check motor
   Wire.beginTransmission(ROLLER_I2C_ADDR);
   if (Wire.endTransmission() != 0) {
-    Serial.println("ERROR: Motor not found!");
+    // RED solid = error
     while(1) {
-      delay(1000);
+      setLED(50, 0, 0);
+      delay(500);
+      setLED(0, 0, 0);
+      delay(500);
     }
   }
 
   // Init motor
   motorInit();
-  setLED(0, 50, 0);  // Green = ready
 
-  Serial.println("Motor ready. Starting in 3 seconds...\n");
-  delay(3000);
+  // Green = ready
+  setLED(0, 50, 0);
+  delay(2000);
 
   // Start first revolution immediately
   lastRevolutionTime = millis() - REVOLUTION_INTERVAL;
@@ -300,7 +315,6 @@ void loop() {
   if (revState == REV_IDLE) {
     if (millis() - lastRevolutionTime >= REVOLUTION_INTERVAL) {
       lastRevolutionTime = millis();
-      Serial.printf("Revolution #%d starting...\n", revolutionCount + 1);
       startRevolution();
     }
   }
