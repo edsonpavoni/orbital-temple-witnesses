@@ -267,40 +267,34 @@ void updateRevolution() {
 void setup() {
   // NO SERIAL - runs without USB host
 
-  // I2C init first (needed for LED)
+  // I2C init
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(I2C_FREQ);
   delay(100);
 
-  // Blink RED to show code is running
-  for (int i = 0; i < 3; i++) {
-    setLED(50, 0, 0);  // Red
-    delay(200);
-    setLED(0, 0, 0);   // Off
-    delay(200);
-  }
-
-  // Yellow = initializing
-  setLED(50, 30, 0);
-
   // Check motor
   Wire.beginTransmission(ROLLER_I2C_ADDR);
   if (Wire.endTransmission() != 0) {
-    // RED solid = error
+    // Motor not found - stuck here
     while(1) {
-      setLED(50, 0, 0);
-      delay(500);
-      setLED(0, 0, 0);
-      delay(500);
+      delay(1000);
     }
   }
 
   // Init motor
   motorInit();
+  delay(500);
 
-  // Green = ready
-  setLED(0, 50, 0);
-  delay(2000);
+  // STARTUP WIGGLE - shows code is running
+  // Small back-and-forth movement
+  motorSetSpeed(300);   // Slow forward
+  delay(300);
+  motorSetSpeed(-300);  // Slow backward
+  delay(300);
+  motorSetSpeed(300);   // Forward again
+  delay(300);
+  motorStop();
+  delay(1000);
 
   // Start first revolution immediately
   lastRevolutionTime = millis() - REVOLUTION_INTERVAL;
