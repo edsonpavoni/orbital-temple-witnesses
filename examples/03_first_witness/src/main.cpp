@@ -5,7 +5,7 @@
  *
  * Automated testing: cycles through different parameters
  * Each test: 2 revolutions (3s each), 4s pause between
- * Then 10s pause before next test
+ * Then 5s pause before next test
  *
  * BATCH 1: Testing deceleration zone (degrees)
  * Test 1: 90°  (original)
@@ -99,6 +99,7 @@ enum RevState {
 };
 
 RevState revState = REV_IDLE;
+bool revJustCompleted = false;  // Flag to detect completion
 int32_t revStartPos = 0;
 int32_t revTargetPos = 0;
 int32_t revCruiseSpeed = 0;
@@ -205,6 +206,8 @@ int32_t motorGetPosition() {
 void startRevolution() {
   if (revState != REV_IDLE) return;
 
+  revJustCompleted = false;  // Reset flag
+
   unsigned long cruiseTime = REVOLUTION_DURATION - (2 * revAccelTime);
   float effectiveTime = revAccelTime / 1000.0f + cruiseTime / 1000.0f;
   float stepsPerSec = STEPS_PER_REV / effectiveTime;
@@ -220,7 +223,7 @@ void startRevolution() {
 }
 
 bool updateRevolution() {
-  if (revState == REV_IDLE) return true;  // Done
+  if (revState == REV_IDLE) return false;  // Not running
 
   unsigned long elapsed = millis() - revStartTime;
   int32_t currentPos = motorGetPosition();
@@ -265,6 +268,7 @@ bool updateRevolution() {
     case REV_STOPPING: {
       motorStop();
       revState = REV_IDLE;
+      revJustCompleted = true;  // Signal completion
       setLED(0, 50, 0);  // Green
       return true;  // Done
     }
@@ -304,7 +308,9 @@ void updateTestSequence() {
       break;
 
     case TEST_REVOLUTION:
-      if (updateRevolution()) {
+      updateRevolution();
+      if (revJustCompleted) {
+        revJustCompleted = false;  // Clear flag
         // Revolution complete
         currentRev++;
         if (currentRev < 2) {
@@ -327,7 +333,7 @@ void updateTestSequence() {
       break;
 
     case TEST_PAUSE_AFTER:
-      if (millis() - stateStartTime >= 10000) {
+      if (millis() - stateStartTime >= 5000) {  // 5 second pause between tests
         currentTest++;
         startNextTest();
       }
