@@ -34,7 +34,7 @@
 #define ROLLER_I2C_ADDR  0x64
 #define I2C_SDA_PIN      8
 #define I2C_SCL_PIN      9
-#define I2C_FREQ         100000
+#define I2C_FREQ         400000  // 400kHz (was 100kHz) - faster I2C
 
 // Registers
 #define REG_OUTPUT       0x00
@@ -53,6 +53,15 @@
 // Timing
 #define REVOLUTION_DURATION  3000   // 3 seconds per revolution
 #define REVOLUTION_INTERVAL  10000  // 10 seconds between revolutions
+
+// =============================================================================
+// TUNING PARAMETERS (adjust these to improve smoothness)
+// =============================================================================
+#define ACCEL_TIME_MS     600     // Acceleration duration (ms)
+#define DECEL_ZONE_DEG    120     // Deceleration zone (degrees) - was 90
+#define MIN_SPEED         0       // Minimum speed during decel (0 = ramp to zero)
+#define UPDATE_RATE_HZ    500     // Loop update rate (was 200)
+#define CURRENT_LIMIT     200000  // Max current (×100000) - 2A (was 1.5A)
 
 // =============================================================================
 // EASING FUNCTION
@@ -74,7 +83,7 @@ float smootherstep(float t) {
 // STATE
 // =============================================================================
 
-int32_t currentLimit = 150000;  // 1.5A
+int32_t currentLimit = CURRENT_LIMIT;
 
 // Revolution state machine
 enum RevState {
@@ -90,7 +99,7 @@ int32_t revStartPos = 0;
 int32_t revTargetPos = 0;
 int32_t revCruiseSpeed = 0;
 unsigned long revStartTime = 0;
-unsigned long revAccelTime = 600;   // 0.6s acceleration
+unsigned long revAccelTime = ACCEL_TIME_MS;
 unsigned long lastRevolutionTime = 0;
 int revolutionCount = 0;
 
@@ -220,8 +229,8 @@ void updateRevolution() {
 
     case REV_CRUISING: {
       int32_t remaining = revTargetPos - currentPos;
-      // Start decel at 90° remaining
-      if (remaining <= STEPS_PER_REV / 4) {
+      int32_t decelZoneSteps = (STEPS_PER_REV * DECEL_ZONE_DEG) / 360;
+      if (remaining <= decelZoneSteps) {
         revState = REV_DECELERATING;
       }
       break;
@@ -229,9 +238,9 @@ void updateRevolution() {
 
     case REV_DECELERATING: {
       int32_t remaining = revTargetPos - currentPos;
-      int32_t decelDistance = STEPS_PER_REV / 4;
+      int32_t decelDistance = (STEPS_PER_REV * DECEL_ZONE_DEG) / 360;
 
-      if (remaining <= 50) {
+      if (remaining <= 30) {  // ~0.3° from target
         revState = REV_STOPPING;
         motorStop();
       } else {
@@ -239,9 +248,8 @@ void updateRevolution() {
         t = constrain(t, 0.0f, 1.0f);
         float speedFactor = easeOutQuint(t);
 
-        // Ramp all the way to zero (no minimum)
         int32_t speed = (int32_t)(revCruiseSpeed * speedFactor);
-        if (speed < 20) speed = 20;  // Tiny minimum just to keep moving
+        if (speed < MIN_SPEED) speed = MIN_SPEED;
         motorSetSpeed(speed);
       }
       break;
@@ -316,5 +324,5 @@ void loop() {
   // Update revolution state machine
   updateRevolution();
 
-  delay(5);  // 200Hz update rate
+  delay(1000 / UPDATE_RATE_HZ);  // Configurable update rate
 }
