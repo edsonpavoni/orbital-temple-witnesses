@@ -200,18 +200,41 @@ void updateRevolution() {
 // =============================================================================
 
 void setup() {
+  // Wait for power to stabilize (motor may boot slower)
+  delay(1000);
+
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(I2C_FREQ);
   delay(100);
 
-  Wire.beginTransmission(ROLLER_I2C_ADDR);
-  if (Wire.endTransmission() != 0) {
+  // Retry I2C connection up to 10 times
+  bool motorFound = false;
+  for (int i = 0; i < 10; i++) {
+    Wire.beginTransmission(ROLLER_I2C_ADDR);
+    if (Wire.endTransmission() == 0) {
+      motorFound = true;
+      break;
+    }
+    delay(500);  // Wait and retry
+  }
+
+  if (!motorFound) {
+    // Motor not found - loop forever
     while(1) delay(1000);
   }
 
   motorInit();
+
+  // Startup wiggle to confirm working
+  setLED(50, 50, 0);  // Yellow
+  setSpeed(500);      // Small movement
+  delay(200);
+  setSpeed(-500);
+  delay(200);
+  setSpeed(0);
+
   setLED(0, 50, 0);  // Green = ready
-  delay(2000);
+  delay(1000);
 
   // Start first revolution
   startRevolution();
