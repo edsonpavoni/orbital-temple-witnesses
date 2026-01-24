@@ -6,14 +6,14 @@
  * Automated testing: cycles through different parameters
  * Each test: 1 revolution (3s), then 2s pause
  *
- * BATCH 4: Testing update rate (Hz)
- * Test 1: 100Hz  (slow)
- * Test 2: 250Hz  (medium)
- * Test 3: 500Hz  (current)
- * Test 4: 750Hz  (faster)
- * Test 5: 1000Hz (very fast)
+ * BATCH 5: Testing current limit (mA)
+ * Test 1: 100000 (1.0A)
+ * Test 2: 150000 (1.5A)
+ * Test 3: 200000 (2.0A) - current
+ * Test 4: 250000 (2.5A)
+ * Test 5: 300000 (3.0A)
  *
- * Fixed: decel zone = 180°, easing = quint
+ * Fixed: decel zone = 180°, update rate = 500Hz
  *
  * Watch and note which test number feels smoothest!
  *
@@ -48,8 +48,8 @@
 // TEST PARAMETERS
 // =============================================================================
 
-// Values to test (update rate in Hz)
-const int TEST_VALUES[] = {100, 250, 500, 750, 1000};
+// Values to test (current limit in units of 100uA, so 100000 = 1A)
+const int32_t TEST_VALUES[] = {100000, 150000, 200000, 250000, 300000};
 const int NUM_TESTS = 5;
 
 // Winners from previous batches
@@ -82,7 +82,7 @@ float easeOutQuint(float t) {
 // =============================================================================
 
 int currentTest = 0;
-int currentUpdateRate = TEST_VALUES[0];
+int32_t currentCurrentLimit = TEST_VALUES[0];
 
 enum TestState {
   TEST_WAITING,
@@ -295,7 +295,10 @@ void startNextTest() {
     currentTest = 0;
   }
 
-  currentUpdateRate = TEST_VALUES[currentTest];
+  currentCurrentLimit = TEST_VALUES[currentTest];
+  // Apply new current limit
+  writeReg32(REG_SPEED_MAXCUR, currentCurrentLimit);
+  delay(50);
 
   // Show test number with LED blinks
   showTestNumber(currentTest + 1);
@@ -356,5 +359,5 @@ void setup() {
 
 void loop() {
   updateTestSequence();
-  delay(1000 / currentUpdateRate);
+  delay(2);  // Fixed 500Hz
 }

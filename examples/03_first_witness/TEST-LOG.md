@@ -70,19 +70,25 @@
 
 ## Batch 4: Update Rate (Hz)
 
+**SKIPPED** - Variable loop delay broke timing. Keep 500Hz.
+
+---
+
+## Batch 5: Current Limit (Amps)
+
 **Fixed parameters:**
 - Decel zone: 180°
-- Easing: quint
+- Update rate: 500Hz
 
-| Test | Update Rate | Result | Notes |
-|------|-------------|--------|-------|
-| 1 | 100Hz | | Slow updates |
-| 2 | 250Hz | | Medium |
-| 3 | 500Hz | | Current |
-| 4 | 750Hz | | Faster |
-| 5 | 1000Hz | | Very fast |
+| Test | Current | Result | Notes |
+|------|---------|--------|-------|
+| 1 | 1.0A | | Less torque |
+| 2 | 1.5A | | |
+| 3 | 2.0A | | Current |
+| 4 | 2.5A | | More torque |
+| 5 | 3.0A | | Max torque |
 
-**Best from Batch 4:** _TBD_
+**Best from Batch 5:** _TBD_
 
 ---
 
