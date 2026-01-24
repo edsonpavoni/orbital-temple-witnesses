@@ -1,16 +1,14 @@
 /*
  * ============================================================================
- * FIRST WITNESS - PARAMETER TEST (HYBRID APPROACH)
+ * FIRST WITNESS - SINE CURVE WITH DRIFT CORRECTION
  * ============================================================================
  *
- * HYBRID: Time-based accel + Position-based decel = smooth AND precise
+ * Hybrid approach:
+ * - Smooth sine curve for motion (pure time-based)
+ * - After each revolution, measure position error
+ * - Adjust next revolution to compensate
  *
- * BATCH 4: Update Rate (Hz)
- * Test 1: 100Hz
- * Test 2: 250Hz
- * Test 3: 500Hz
- * Test 4: 750Hz
- * Test 5: 1000Hz
+ * Result: Smooth motion + precise position over time
  *
  * ============================================================================
  */
@@ -39,46 +37,30 @@
 #define STEPS_PER_REV    36000
 
 // =============================================================================
-// TEST PARAMETERS
+// MOTION PARAMETERS
 // =============================================================================
 
-const int TEST_VALUES[] = {100, 250, 500, 750, 1000};
-const int NUM_TESTS = 5;
-
-// Fixed parameters (best from previous tests)
-#define ACCEL_TIME_MS    500     // Time-based accel
-#define DECEL_ZONE_DEG   90      // Position-based decel (reduced from 180)
-#define CURRENT_LIMIT    200000  // 2A
-#define MIN_SPEED        100     // 1 RPM minimum during decel
-
-// =============================================================================
-// EASING
-// =============================================================================
-
-float smootherstep(float t) {
-  t = constrain(t, 0.0f, 1.0f);
-  return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-}
+#define REVOLUTION_DURATION  3000    // 3 seconds
+#define CURRENT_LIMIT        200000  // 2A
+#define UPDATE_RATE_HZ       100     // 100Hz
 
 // =============================================================================
 // STATE
 // =============================================================================
 
-int currentTest = 0;
-int currentUpdateRate = TEST_VALUES[0];
-
-enum TestState { TEST_WAITING, TEST_REVOLUTION, TEST_PAUSE };
-TestState testState = TEST_WAITING;
-unsigned long stateStartTime = 0;
-
-enum RevState { REV_IDLE, REV_ACCEL, REV_CRUISE, REV_DECEL, REV_DONE };
-RevState revState = REV_IDLE;
+bool revRunning = false;
+unsigned long revStartTime = 0;
 bool revComplete = false;
 
+// Position tracking for drift correction
 int32_t revStartPos = 0;
 int32_t revTargetPos = 0;
-int32_t revCruiseSpeed = 2000;  // ~20 RPM default
-unsigned long revStartTime = 0;
+int32_t revDistance = STEPS_PER_REV;  // Adjusted each revolution
+
+// Test sequence
+unsigned long pauseStart = 0;
+bool inPause = false;
+int revCount = 0;
 
 // =============================================================================
 // I2C
@@ -120,21 +102,6 @@ int32_t readReg32(uint8_t reg) {
 // LED
 // =============================================================================
 
-void showTestNum(int n) {
-  for (int i = 0; i < n; i++) {
-    Wire.beginTransmission(ROLLER_I2C_ADDR);
-    Wire.write(REG_RGB);
-    Wire.write(50); Wire.write(50); Wire.write(0);
-    Wire.endTransmission();
-    delay(200);
-    Wire.beginTransmission(ROLLER_I2C_ADDR);
-    Wire.write(REG_RGB);
-    Wire.write(0); Wire.write(0); Wire.write(0);
-    Wire.endTransmission();
-    delay(200);
-  }
-}
-
 void setLED(uint8_t r, uint8_t g, uint8_t b) {
   Wire.beginTransmission(ROLLER_I2C_ADDR);
   Wire.write(REG_RGB);
@@ -169,115 +136,63 @@ int32_t getPos() {
 }
 
 // =============================================================================
-// REVOLUTION (HYBRID: time accel + position decel)
+// REVOLUTION - SINE CURVE WITH DRIFT CORRECTION
 // =============================================================================
 
 void startRevolution() {
-  if (revState != REV_IDLE) return;
+  if (revRunning) return;
 
   revComplete = false;
   revStartPos = getPos();
-  revTargetPos = revStartPos + STEPS_PER_REV;
+  revTargetPos = revStartPos + STEPS_PER_REV;  // Ideal target
   revStartTime = millis();
-  revCruiseSpeed = 2000;  // 20 RPM
-  revState = REV_ACCEL;
-  setLED(0, 0, 50);
+  revRunning = true;
+  setLED(0, 0, 50);  // Blue = moving
 }
 
 void updateRevolution() {
-  if (revState == REV_IDLE) return;
+  if (!revRunning) return;
 
   unsigned long elapsed = millis() - revStartTime;
-  int32_t pos = getPos();
-  int32_t remaining = revTargetPos - pos;
-  int32_t decelZone = (STEPS_PER_REV * DECEL_ZONE_DEG) / 360;
 
-  switch (revState) {
-    case REV_ACCEL: {
-      // Time-based acceleration
-      float t = (float)elapsed / ACCEL_TIME_MS;
-      t = constrain(t, 0.0f, 1.0f);
-      int32_t spd = (int32_t)(revCruiseSpeed * smootherstep(t));
-      setSpeed(spd);
+  // Time's up - stop and measure error
+  if (elapsed >= REVOLUTION_DURATION) {
+    setSpeed(0);
+    revRunning = false;
+    revComplete = true;
 
-      if (elapsed >= ACCEL_TIME_MS) {
-        revState = REV_CRUISE;
-        setSpeed(revCruiseSpeed);
-      }
-      break;
-    }
+    // Measure position error
+    int32_t actualPos = getPos();
+    int32_t error = actualPos - revTargetPos;  // + = overshoot, - = undershoot
 
-    case REV_CRUISE: {
-      // Cruise until position trigger
-      if (remaining <= decelZone) {
-        revState = REV_DECEL;
-      }
-      break;
-    }
+    // Adjust next revolution distance to compensate
+    // If we overshot by 100 steps, next rev should be 35900 steps
+    revDistance = STEPS_PER_REV - error;
 
-    case REV_DECEL: {
-      // Position-based deceleration
-      if (remaining <= 50) {
-        revState = REV_DONE;
-        setSpeed(0);
-      } else {
-        float t = (float)remaining / decelZone;
-        t = constrain(t, 0.0f, 1.0f);
-        int32_t spd = (int32_t)(revCruiseSpeed * smootherstep(t));
-        if (spd < MIN_SPEED) spd = MIN_SPEED;
-        setSpeed(spd);
-      }
-      break;
-    }
+    // Clamp to reasonable range (avoid wild corrections)
+    if (revDistance < STEPS_PER_REV - 1000) revDistance = STEPS_PER_REV - 1000;
+    if (revDistance > STEPS_PER_REV + 1000) revDistance = STEPS_PER_REV + 1000;
 
-    case REV_DONE: {
-      setSpeed(0);
-      revState = REV_IDLE;
-      revComplete = true;
-      setLED(0, 50, 0);
-      break;
-    }
-
-    default:
-      break;
+    revCount++;
+    setLED(0, 50, 0);  // Green = done
+    return;
   }
-}
 
-// =============================================================================
-// TEST SEQUENCE
-// =============================================================================
+  // Sine curve velocity profile
+  // v(t) = v_avg * (1 - cos(2πt))
 
-void startTest() {
-  if (currentTest >= NUM_TESTS) currentTest = 0;
-  currentUpdateRate = TEST_VALUES[currentTest];
-  showTestNum(currentTest + 1);
-  delay(500);
-  testState = TEST_REVOLUTION;
-  startRevolution();
-}
+  float t = (float)elapsed / REVOLUTION_DURATION;
 
-void updateTest() {
-  switch (testState) {
-    case TEST_WAITING:
-      startTest();
-      break;
+  // Use adjusted distance for v_avg calculation
+  float v_avg = (float)revDistance / (REVOLUTION_DURATION / 1000.0f);
 
-    case TEST_REVOLUTION:
-      updateRevolution();
-      if (revComplete) {
-        revComplete = false;
-        testState = TEST_PAUSE;
-        stateStartTime = millis();
-      }
-      break;
+  // Convert to motor units (RPM * 100)
+  float v_avg_motor = (v_avg * 60.0f / STEPS_PER_REV) * 100.0f;
 
-    case TEST_PAUSE:
-      if (millis() - stateStartTime >= 2000) {
-        currentTest++;
-        startTest();
-      }
-      break;
-  }
+  // Sine curve
+  float currentSpeed = v_avg_motor * (1.0f - cos(TWO_PI * t));
+
+  setSpeed((int32_t)currentSpeed);
 }
 
 // =============================================================================
@@ -295,14 +210,30 @@ void setup() {
   }
 
   motorInit();
-  setLED(0, 50, 0);
+  setLED(0, 50, 0);  // Green = ready
   delay(2000);
-  testState = TEST_WAITING;
+
+  // Start first revolution
+  startRevolution();
 }
 
 void loop() {
-  updateTest();
-  if (currentUpdateRate > 0) {
-    delay(1000 / currentUpdateRate);
+  if (inPause) {
+    // Waiting between revolutions
+    if (millis() - pauseStart >= 3000) {
+      inPause = false;
+      startRevolution();
+    }
+  } else {
+    // Running revolution
+    updateRevolution();
+
+    if (revComplete) {
+      revComplete = false;
+      inPause = true;
+      pauseStart = millis();
+    }
   }
+
+  delay(1000 / UPDATE_RATE_HZ);  // 100Hz = 10ms
 }
