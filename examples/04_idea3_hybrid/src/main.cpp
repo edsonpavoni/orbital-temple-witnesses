@@ -115,16 +115,32 @@ unsigned long lastPosPoll = 0;
 bool wifiConnected = false;
 
 void handleStatus() {
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;
   doc["hostname"]     = WITNESS_HOSTNAME;
   doc["state"]        = stateNames[currentState];
   doc["elapsed_ms"]   = (uint32_t)(millis() - stateStartTime);
-  doc["angle_deg"]    = currentAngleDeg;
-  doc["pos_steps"]    = currentPosSteps;
+  // Anchor is the reference angle for choreography math. The app computes
+  // target = anchor_deg + choreography(state, elapsed_ms). Because
+  // choreography is deterministic, the SVG and the sculpture play the same
+  // score — no encoder feedback needed.
+  int32_t anchorMod = anchorSteps % STEPS_PER_REV;
+  if (anchorMod < 0) anchorMod += STEPS_PER_REV;
+  doc["anchor_deg"]   = (float)anchorMod * 360.0f / (float)STEPS_PER_REV;
   doc["cycle"]        = cycleCount;
   doc["uptime_s"]     = (uint32_t)(millis() / 1000);
   doc["rssi"]         = WiFi.RSSI();
   doc["ip"]           = WiFi.localIP().toString();
+  // Kept for observability/debug only. Not used by the app to drive the SVG.
+  doc["angle_deg"]    = currentAngleDeg;
+  // Choreography constants so the app never drifts from the firmware design.
+  JsonObject choreo = doc.createNestedObject("choreo");
+  choreo["breath_duration_ms"] = BREATH_DURATION_MS;
+  choreo["breath_amplitude_deg"] = BREATH_AMPLITUDE_DEG;
+  choreo["breath_period_ms"]   = BREATH_PERIOD_MS;
+  choreo["ritual_duration_ms"] = RITUAL_DURATION_MS;
+  choreo["ritual_revolutions"] = RITUAL_REVOLUTIONS;
+  choreo["ritual_peak_rpm"]    = RITUAL_PEAK_RPM;
+  choreo["boot_delay_ms"]      = BOOT_DELAY_MS;
 
   String out;
   serializeJson(doc, out);
