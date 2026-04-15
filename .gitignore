@@ -26,3 +26,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Secrets — WiFi creds, API keys. Keep secrets.h.example as the template.
+secrets.h
+**/secrets.h
