@@ -1,0 +1,41 @@
+# Step-response sanity test for the position lab.
+#
+# Usage (you must have the pointer at visual zero before running):
+#   lab.py clear
+#   lab.py send "0"        # zero by hand first
+#   lab.py run tools/plans/step_response.txt
+#   lab.py tail 400        # read what happened
+#
+# This plan runs four 90-degree step responses at the firmware-default PID,
+# alternating easing on/off so we can see the difference. The log will show
+# the tracking error during each move and the settling tail after.
+
+# Easing OFF: instant target write, motor PID alone closes the loop
+eoff
+mt2000
+
+goto90
+wait 3
+goto0
+wait 3
+
+# Easing ON with default cosine S-curve
+eon
+e1
+mt1500
+
+goto90
+wait 3
+goto0
+wait 3
+
+# Faster easing to see if the trajectory is too aggressive
+mt500
+
+goto90
+wait 3
+goto0
+wait 3
+
+# Release at the end so the pointer can be hand-checked
+x

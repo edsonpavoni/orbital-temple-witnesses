@@ -1,0 +1,23 @@
+# Custom partition table — 64 KB NVS (vs Arduino default 20 KB).
+# We persist:
+#   • schedule blob   ~12 KB  (sched namespace)
+#   • mass_offset_deg ~12 B   (calib namespace)
+#   • observer geo    ~32 B   (geo namespace)
+#   • wifi creds      ~80 B   (fwcreds namespace)
+#   • plus ESP-IDF WiFi state, NVS metadata, etc.
+# The default 20 KB partition fragments and refuses 12 KB blob writes
+# (NOT_ENOUGH_SPACE) once anything else needs space.
+#
+# 8 MB flash budget. nvs starts at 0x9000 (same as default).
+#
+# IMPORTANT: When introducing this partition table or changing it, do a
+# `pio run -t erase` BEFORE the next `pio run -t upload`, otherwise the
+# bootloader reads the new table while the firmware is still at the old
+# offset and the chip boot-loops.
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x10000,
+otadata,    data, ota,      0x19000,   0x2000,
+app0,       app,  ota_0,    0x20000,   0x300000,
+app1,       app,  ota_1,    0x320000,  0x300000,
+spiffs,     data, spiffs,   0x620000,  0x1D0000,
+coredump,   data, coredump, 0x7F0000,  0x10000,

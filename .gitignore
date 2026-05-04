@@ -26,3 +26,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Vendored upstream motor SDK clones (kept locally for reference, not tracked)
+reference/motor-roller485-lite/repos/

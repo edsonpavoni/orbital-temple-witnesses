@@ -1,0 +1,5 @@
+label,kp,ki,kd,mc,mt,easing_curve,easing_on
+2A_kp1.5M_baseline,1500000,30,40000000,1000,3000,in_out,1
+2B_kp5M,5000000,30,40000000,1000,3000,in_out,1
+2C_kp15M_pointer_v3,15000000,30,40000000,1000,3000,in_out,1
+2D_kp30M_aggressive,30000000,30,40000000,1000,3000,in_out,1
