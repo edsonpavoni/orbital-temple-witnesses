@@ -1,0 +1,32 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build
+build/
+*.o
+*.elf
+*.bin
+*.hex
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Logs
+*.log
+
+# Secrets — WiFi creds, API keys. Keep secrets.h.example as the template.
+secrets.h
+**/secrets.h
